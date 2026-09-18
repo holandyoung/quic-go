@@ -44,7 +44,7 @@ func newTestPacketPacker(t *testing.T, mockCtrl *gomock.Controller, pers protoco
 	framer := NewMockFrameSource(mockCtrl)
 	ackFramer := NewMockAckFrameSource(mockCtrl)
 	sealingManager := NewMockSealingManager(mockCtrl)
-	datagramQueue := newDatagramQueue(func() {}, utils.DefaultLogger)
+	datagramQueue := newTestDatagramQueue(func() {}, utils.DefaultLogger)
 	retransmissionQueue := newRetransmissionQueue()
 	return &testPacketPacker{
 		pnManager:           pnManager,
@@ -655,10 +655,7 @@ func TestPackDatagramFrames(t *testing.T) {
 	tp.pnManager.EXPECT().PeekPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42), protocol.PacketNumberLen2)
 	tp.pnManager.EXPECT().PopPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42))
 	tp.sealingManager.EXPECT().Get1RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
-	tp.datagramQueue.Add(&wire.DatagramFrame{
-		DataLenPresent: true,
-		Data:           []byte("foobar"),
-	})
+	require.NoError(t, tp.datagramQueue.Add([]byte("foobar"), protocol.MaxByteCount, protocol.Version1))
 	tp.framer.EXPECT().HasData()
 	buffer := getPacketBuffer()
 	p, err := tp.packer.AppendPacket(buffer, protocol.MaxByteCount, monotime.Now(), protocol.Version1)
@@ -680,7 +677,7 @@ func TestPackLargeDatagramFrame(t *testing.T) {
 	tp.pnManager.EXPECT().PopPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42))
 	tp.sealingManager.EXPECT().Get1RTTSealer().Return(newMockShortHeaderSealer(mockCtrl), nil)
 	f := &wire.DatagramFrame{DataLenPresent: true, Data: make([]byte, maxPacketSize-10)}
-	tp.datagramQueue.Add(f)
+	require.NoError(t, tp.datagramQueue.Add(f.Data, protocol.MaxByteCount, protocol.Version1))
 	tp.framer.EXPECT().HasData()
 	buffer := getPacketBuffer()
 	p, err := tp.packer.AppendPacket(buffer, maxPacketSize, monotime.Now(), protocol.Version1)

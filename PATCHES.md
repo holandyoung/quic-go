@@ -18,11 +18,16 @@ defect described in <https://github.com/quic-go/quic-go/issues/4303>.
   windows remain larger. Incoming unidirectional streams have no send policy.
 - Rejecting 0-RTT retires the prior registries. New registries start with zero
   windows and disabled reset capability; old references cannot gain new policy.
-- Received and effective transport parameters are immutable, atomically
-  published snapshots with different protocol activation times. Public state
-  and migration inspect validated received parameters; application datagrams
-  use the effective snapshot. Stream parameters apply only at restoration or
-  handshake application, preserving early-data semantics.
+- Validated received parameters are an immutable, atomically published snapshot
+  used by public state and migration. Stream registries and the DATAGRAM send
+  queue own their effective policy, applied only at restoration or handshake
+  application. There is no second connection-wide effective-parameter mirror.
+- The DATAGRAM queue owns validation, payload copying, capacity and 0-RTT send
+  generation under its existing mutex. Rejection clears queued early data and
+  wakes all blocked producers with `Err0RTTRejected`; old producers cannot
+  insert payloads after a new policy is applied. Accepted early data remains
+  available before handshake completion. Normal non-0-RTT connections allocate
+  no additional broadcast channel; blocked calls copy only upon admission.
 
 No exported API changes, protocol fallback, compatibility shim, unsafe access
 or duplicated transport implementation is introduced.
@@ -41,6 +46,12 @@ effective windows, existing incoming streams before and after Accept, larger
 MAX_STREAM_DATA and reset negotiation. The concurrent test covers simultaneous
 bidirectional and unidirectional opening and parameter publication. Existing
 reset/rejection and full protocol integration tests remain required.
+
+`TestConnectionDatagram0RTTRejection` drives restored, received, rejected and
+applied parameter phases through the connection, with a full send queue and
+eight producers. It checks disabled and smaller new limits, rejection wakeup,
+no old-data revival, and immutable copies of new payloads. The queue limit test
+also checks packet-size limits and empty-frame header overhead.
 
 The native zero-allocation frame-parser assertion lives in a `!race` test file:
 Go's race runtime intentionally discards random `sync.Pool.Put` entries, making

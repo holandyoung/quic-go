@@ -1520,6 +1520,71 @@ func TestConnection0RTTTransportParameters(t *testing.T) {
 	}
 }
 
+func TestConnectionDatagram0RTTRejection(t *testing.T) {
+	for _, maxFrameSize := range []protocol.ByteCount{0, 10} {
+		t.Run(fmt.Sprintf("new-limit-%d", maxFrameSize), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				tc := newClientTestConnection(t, nil, nil, true)
+				c := tc.conn
+				defer c.datagramQueue.CloseWithError(assert.AnError)
+				restored := &wire.TransportParameters{
+					ActiveConnectionIDLimit: 2,
+					MaxDatagramFrameSize:    100,
+				}
+				c.restoreTransportParameters(restored)
+				// Restored policy admits real early data before the handshake.
+				for range maxDatagramSendQueueLen {
+					require.NoError(t, c.SendDatagram(bytes.Repeat([]byte{1}, 50)))
+				}
+				const producers = 8
+				results := make(chan error, producers)
+				for range producers {
+					go func() { results <- c.SendDatagram(bytes.Repeat([]byte{2}, 50)) }()
+				}
+				synctest.Wait()
+				require.Empty(t, results, "all producers must reach the full old queue")
+
+				params := *restored
+				params.OriginalDestinationConnectionID = tc.destConnID
+				params.InitialSourceConnectionID = c.handshakeDestConnID
+				params.MaxDatagramFrameSize = maxFrameSize
+				require.NoError(t, c.handleTransportParameters(&params))
+				// Receiving parameters alone must not replace effective early policy.
+				require.NotNil(t, c.datagramQueue.Peek())
+				c.datagramQueue.Pop()
+				synctest.Wait()
+				require.Len(t, results, 1)
+				require.NoError(t, <-results)
+
+				require.NoError(t, c.dropEncryptionLevel(protocol.Encryption0RTT, monotime.Now()))
+				require.Nil(t, c.datagramQueue.Peek(), "rejected frames must not survive into 1-RTT")
+				require.ErrorIs(t, c.SendDatagram([]byte{3}), Err0RTTRejected)
+				// Apply immediately, before waiting for old producers: they must not
+				// observe new capacity and reintroduce old-generation payloads.
+				c.applyTransportParameters()
+				synctest.Wait()
+				require.Len(t, results, producers-1, "rejection must wake every blocked producer")
+				for range producers - 1 {
+					require.ErrorIs(t, <-results, Err0RTTRejected)
+				}
+				require.Nil(t, c.datagramQueue.Peek())
+				if maxFrameSize == 0 {
+					require.ErrorIs(t, c.SendDatagram([]byte{4}), errDatagramsDisabled)
+					return
+				}
+				err := c.SendDatagram(bytes.Repeat([]byte{4}, 9))
+				var tooLarge *DatagramTooLargeError
+				require.ErrorAs(t, err, &tooLarge)
+				require.EqualValues(t, 8, tooLarge.MaxDatagramPayloadSize)
+				payload := []byte("new-data")
+				require.NoError(t, c.SendDatagram(payload))
+				payload[0] = 'X'
+				require.Equal(t, []byte("new-data"), c.datagramQueue.Peek().Data)
+			})
+		})
+	}
+}
+
 func TestConnectionReceivePrioritization(t *testing.T) {
 	for _, handshakeComplete := range []bool{true, false} {
 		t.Run(fmt.Sprintf("handshake complete: %t", handshakeComplete), func(t *testing.T) {

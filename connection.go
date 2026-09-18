@@ -209,10 +209,9 @@ type Conn struct {
 	// pacingDeadline is the time when the next packet should be sent
 	pacingDeadline monotime.Time
 
-	// Validated received parameters and the subset currently effective for
-	// application sending have distinct publication times during 0-RTT.
-	peerParams          atomic.Pointer[wire.TransportParameters]
-	effectivePeerParams atomic.Pointer[wire.TransportParameters]
+	// Received parameters are immutable after validation. Stream and datagram
+	// owners apply their sending policy at restoration or handshake completion.
+	peerParams atomic.Pointer[wire.TransportParameters]
 
 	timer *time.Timer
 	// keepAlivePingSent stores whether a keep alive PING is in flight.
@@ -2309,6 +2308,7 @@ func (c *Conn) dropEncryptionLevel(encLevel protocol.EncryptionLevel, now monoti
 		c.cryptoStreamHandler.DiscardInitialKeys()
 	case protocol.Encryption0RTT:
 		c.streamsMap.ResetFor0RTT()
+		c.datagramQueue.Reject0RTT()
 		c.framer.Handle0RTTRejection()
 		return c.connFlowController.Reset()
 	}
@@ -2350,7 +2350,7 @@ func (c *Conn) restoreTransportParameters(params *wire.TransportParameters) {
 	c.connIDGenerator.SetMaxActiveConnIDs(params.ActiveConnectionIDLimit)
 	c.connFlowController.UpdateSendWindow(params.InitialMaxData)
 	c.streamsMap.HandleTransportParameters(params)
-	c.effectivePeerParams.Store(params)
+	c.datagramQueue.ApplyTransportParameters(params.MaxDatagramFrameSize, true)
 }
 
 func (c *Conn) handleTransportParameters(params *wire.TransportParameters) error {
@@ -2445,7 +2445,7 @@ func (c *Conn) applyTransportParameters() {
 		maxPacketSize,
 		c.qlogger,
 	)
-	c.effectivePeerParams.Store(params)
+	c.datagramQueue.ApplyTransportParameters(params.MaxDatagramFrameSize, false)
 }
 
 func (c *Conn) triggerSending(now monotime.Time) error {
@@ -3017,25 +3017,11 @@ func (c *Conn) onStreamCompleted(id protocol.StreamID) {
 // The payload of the datagram needs to fit into a single QUIC packet.
 // In addition, a datagram may be dropped before being sent out if the available packet size suddenly decreases.
 // If the payload is too large to be sent at the current time, a DatagramTooLargeError is returned.
+// If 0-RTT is rejected while waiting for queue capacity, Err0RTTRejected is returned.
 func (c *Conn) SendDatagram(p []byte) error {
-	params := c.effectivePeerParams.Load()
-	if params == nil || params.MaxDatagramFrameSize <= 0 {
-		return errors.New("datagram support disabled")
-	}
-
-	f := &wire.DatagramFrame{DataLenPresent: true}
 	// The payload size estimate is conservative.
 	// Under many circumstances we could send a few more bytes.
-	maxDataLen := min(
-		f.MaxDataLen(params.MaxDatagramFrameSize, c.version),
-		protocol.ByteCount(c.maxPayloadSizeEstimate.Load()),
-	)
-	if protocol.ByteCount(len(p)) > maxDataLen {
-		return &DatagramTooLargeError{MaxDatagramPayloadSize: int64(maxDataLen)}
-	}
-	f.Data = make([]byte, len(p))
-	copy(f.Data, p)
-	return c.datagramQueue.Add(f)
+	return c.datagramQueue.Add(p, protocol.ByteCount(c.maxPayloadSizeEstimate.Load()), c.version)
 }
 
 // ReceiveDatagram gets a message received in a QUIC datagram, as specified in RFC 9221.

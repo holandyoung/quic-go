@@ -2,12 +2,16 @@ package quic
 
 import (
 	"context"
+	"errors"
 	"sync"
 
+	"github.com/quic-go/quic-go/internal/protocol"
 	"github.com/quic-go/quic-go/internal/utils"
 	"github.com/quic-go/quic-go/internal/utils/ringbuffer"
 	"github.com/quic-go/quic-go/internal/wire"
 )
+
+var errDatagramsDisabled = errors.New("datagram support disabled")
 
 const (
 	maxDatagramSendQueueLen = 32
@@ -15,9 +19,13 @@ const (
 )
 
 type datagramQueue struct {
-	sendMx    sync.Mutex
-	sendQueue ringbuffer.RingBuffer[*wire.DatagramFrame]
-	sent      chan struct{} // used to notify Add that a datagram was dequeued
+	sendMx         sync.Mutex
+	sendQueue      ringbuffer.RingBuffer[*wire.DatagramFrame]
+	sent           chan struct{} // used to notify Add that a datagram was dequeued
+	maxFrameSize   protocol.ByteCount
+	sendErr        error
+	sendGeneration uint64
+	sendReset      chan struct{} // allocated only while sending replayable early data
 
 	rcvMx    sync.Mutex
 	rcvQueue [][]byte
@@ -38,17 +46,42 @@ func newDatagramQueue(hasData func(), logger utils.Logger) *datagramQueue {
 		sent:    make(chan struct{}, 1),
 		closed:  make(chan struct{}),
 		logger:  logger,
+		sendErr: errDatagramsDisabled,
 	}
 }
 
 // Add queues a new DATAGRAM frame for sending.
 // Up to 32 DATAGRAM frames will be queued.
 // Once that limit is reached, Add blocks until the queue size has reduced.
-func (h *datagramQueue) Add(f *wire.DatagramFrame) error {
+func (h *datagramQueue) Add(payload []byte, maxPayload protocol.ByteCount, version protocol.Version) error {
 	h.sendMx.Lock()
+	if h.sendErr != nil {
+		err := h.sendErr
+		h.sendMx.Unlock()
+		return err
+	}
+	f := &wire.DatagramFrame{DataLenPresent: true}
+	limit := min(f.MaxDataLen(h.maxFrameSize, version), maxPayload)
+	if protocol.ByteCount(len(payload)) > limit || f.Length(version) > h.maxFrameSize {
+		h.sendMx.Unlock()
+		return &DatagramTooLargeError{MaxDatagramPayloadSize: int64(limit)}
+	}
+	generation := h.sendGeneration
 
 	for {
+		if generation != h.sendGeneration {
+			h.sendMx.Unlock()
+			return Err0RTTRejected
+		}
+		select {
+		case <-h.closed:
+			h.sendMx.Unlock()
+			return h.closeErr
+		default:
+		}
 		if h.sendQueue.Len() < maxDatagramSendQueueLen {
+			f.Data = make([]byte, len(payload))
+			copy(f.Data, payload)
 			h.sendQueue.PushBack(f)
 			h.sendMx.Unlock()
 			h.hasData()
@@ -58,13 +91,47 @@ func (h *datagramQueue) Add(f *wire.DatagramFrame) error {
 		case <-h.sent: // drain the queue so we don't loop immediately
 		default:
 		}
+		reset := h.sendReset
 		h.sendMx.Unlock()
 		select {
 		case <-h.closed:
 			return h.closeErr
+		case <-reset:
+			return Err0RTTRejected
 		case <-h.sent:
 		}
 		h.sendMx.Lock()
+	}
+}
+
+// ApplyTransportParameters is called only when restored or handshake parameters
+// become effective. After acceptance, limits can only increase. Rejection
+// retires the old queue before a smaller or disabled policy can be applied.
+func (h *datagramQueue) ApplyTransportParameters(maxFrameSize protocol.ByteCount, early bool) {
+	h.sendMx.Lock()
+	defer h.sendMx.Unlock()
+	h.maxFrameSize = maxFrameSize
+	h.sendErr = nil
+	if maxFrameSize <= 0 {
+		h.sendErr = errDatagramsDisabled
+	} else if early && h.sendReset == nil {
+		h.sendReset = make(chan struct{})
+	}
+}
+
+// Reject0RTT retires every queued early datagram and wakes all producers from
+// that generation. Accepted new-generation sends cannot revive rejected data.
+// The connection loop also owns Peek/Pop, so a peek cannot straddle rejection.
+func (h *datagramQueue) Reject0RTT() {
+	h.sendMx.Lock()
+	defer h.sendMx.Unlock()
+	h.sendGeneration++
+	h.maxFrameSize = 0
+	h.sendErr = Err0RTTRejected
+	h.sendQueue.Clear()
+	if h.sendReset != nil {
+		close(h.sendReset)
+		h.sendReset = nil
 	}
 }
 
