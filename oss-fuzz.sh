@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+quic_source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "Build date (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 go version
@@ -13,7 +15,7 @@ git log -1 --format='qpack revision: %H (%cI) %s'
 compile_native_go_fuzzer_v2 github.com/quic-go/qpack FuzzDecode qpack_decode_fuzzer
 
 # fuzz quic-go
-cd $GOPATH/src/github.com/holandyoung/quic-go/
+cd "$quic_source_dir"
 git log -1 --format='quic-go revision: %H (%cI) %s'
 
 build_native_go_fuzzer() {

@@ -41,6 +41,10 @@ or a `replace` directive. Internal imports, generated mocks, fuzzers, nested
 integration fixtures and interop linker flags use the same identity. The
 independent upstream qpack and fuzz-seed modules retain their native identities.
 Upstream source, issue, documentation and attribution URLs remain official.
+The standalone Google OSS-Fuzz fixture also retains its native container mount
+path; this is not a module import or compatibility path. Every documented local
+build mounts this fork there, and `oss-fuzz.sh` resolves its own source directory
+instead of assuming GOPATH layout. Its revision log identifies the code tested.
 
 ## Upstream-first maintenance and retirement
 
