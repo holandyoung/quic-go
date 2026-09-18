@@ -55,10 +55,12 @@ permanent reason to use the fork.
 
 ## Fork CI scope
 
-Keep native unit, race, integration, generation, lint, cross-compilation and
-interop-image build checks. Remove upstream-specific Codecov/CodSpeed and
-ClusterFuzz service workflows, credentials and Docker Hub publication; those
-external services are not owned by this fork. Native fuzz seed tests remain.
+Keep native unit, race, integration, generation, lint, cross-compilation,
+interop-image build and 480-second ClusterFuzzLite PR code-change fuzzing checks.
+Remove upstream-specific Codecov/CodSpeed, scheduled corpus maintenance,
+credentials and Docker Hub publication; those external services are not owned
+by this fork. PR fuzzing runs without upstream corpus storage or credentials;
+native fuzz seed tests also remain and do not replace active fuzzing.
 The unit race step must actually pass `-race`, and the former Go 1.27 release
 candidate is replaced by stable Go 1.27.1.
 
