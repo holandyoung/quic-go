@@ -34,8 +34,9 @@ or duplicated transport implementation is introduced.
 
 ## Upstream-first maintenance and retirement
 
-Before every dependency-version update, inspect official releases, relevant
-issues and pull requests, and the actual stream/transport-parameter code. Check
+Before every HyperCacheDNS release or dependency-version update, inspect
+official releases, relevant issues and pull requests, and the actual
+stream/transport-parameter code. Check
 for both direct fixes and equivalent native ownership mechanisms; an open or
 closed issue alone is not proof. Record the reviewed official revision and
 compare it with this patch family before deciding to carry any patch forward.
