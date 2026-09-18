@@ -10,13 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: [ "1.25.x", "1.26.x", "1.27.0-rc.1" ]
+        go: [ "1.25.x", "1.26.x", "1.27.1" ]
     runs-on: ${{ fromJSON(vars['CROSS_COMPILE_RUNNER_UBUNTU'] || '"ubuntu-latest"') }}
     name: "Cross Compilation (Go ${{matrix.go}})"
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -25,7 +25,7 @@ jobs:
         run: echo "date=$(/bin/date -u "+%Y%m%d")" >> $GITHUB_OUTPUT
       - name: Load Go build cache
         id: load-go-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/go-build
           key: go-${{ matrix.go }}-crosscompile-${{ steps.get-date.outputs.date }}
@@ -40,9 +40,9 @@ jobs:
         # run in parallel on as many cores as are available on the machine
         run: go tool dist list | xargs -I % -P "$(nproc)" .github/workflows/cross-compile.sh %
       - name: Save Go build cache
-        # only store cache when on master
-        if: github.event_name == 'push' && github.ref_name == 'master'
-        uses: actions/cache/save@v6
+        # only store cache when on the fork default branch
+        if: github.event_name == 'push' && github.ref_name == 'hcdns'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/go-build
           # Caches are immutable, so we only update it once per day (at most).

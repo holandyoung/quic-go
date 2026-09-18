@@ -32,6 +32,36 @@ defect described in <https://github.com/quic-go/quic-go/issues/4303>.
 No exported API changes, protocol fallback, compatibility shim, unsafe access
 or duplicated transport implementation is introduced.
 
+## Upstream-first maintenance and retirement
+
+Before every dependency-version update, inspect official releases, relevant
+issues and pull requests, and the actual stream/transport-parameter code. Check
+for both direct fixes and equivalent native ownership mechanisms; an open or
+closed issue alone is not proof. Record the reviewed official revision and
+compare it with this patch family before deciding to carry any patch forward.
+
+If official code supplies the required behavior, run the same early-stream,
+rejection, DATAGRAM, race and consumer regressions against it. Once equivalent
+behavior is verified, switch both dnsproxy and HyperCacheDNS to the official
+module, remove their fork replacements and provenance entries, and retire the
+corresponding local patches. Do not retain duplicate or compatibility paths.
+This fork is temporary defect repair, not a permanent alternative transport.
+
+The last source comparison used official v0.62.0 and master
+`fcb5bedbbcd74a3a80cd247f9f02660b98fc36f6` on 2026-09-18; both still had the
+mutable peer-parameter and stream-reset-policy accesses described in issue
+#4303. Recheck this evidence on the next update instead of treating it as a
+permanent reason to use the fork.
+
+## Fork CI scope
+
+Keep native unit, race, integration, generation, lint, cross-compilation and
+interop-image build checks. Remove upstream-specific Codecov/CodSpeed and
+ClusterFuzz service workflows, credentials and Docker Hub publication; those
+external services are not owned by this fork. Native fuzz seed tests remain.
+The unit race step must actually pass `-race`, and the former Go 1.27 release
+candidate is replaced by stable Go 1.27.1.
+
 ## Verification
 
 Run both uninstrumented and race-instrumented suites:
