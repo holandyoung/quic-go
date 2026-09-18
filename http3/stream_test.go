@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3/qlog"
-	"github.com/quic-go/quic-go/qlogwriter"
-	"github.com/quic-go/quic-go/testutils/events"
+	"github.com/holandyoung/quic-go"
+	"github.com/holandyoung/quic-go/http3/qlog"
+	"github.com/holandyoung/quic-go/qlogwriter"
+	"github.com/holandyoung/quic-go/testutils/events"
 
 	"github.com/quic-go/qpack"
 

@@ -14,16 +14,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/ackhandler"
-	"github.com/quic-go/quic-go/internal/handshake"
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/qerr"
-	"github.com/quic-go/quic-go/internal/utils"
-	"github.com/quic-go/quic-go/internal/utils/ringbuffer"
-	"github.com/quic-go/quic-go/internal/wire"
-	"github.com/quic-go/quic-go/qlog"
-	"github.com/quic-go/quic-go/qlogwriter"
+	"github.com/holandyoung/quic-go/internal/ackhandler"
+	"github.com/holandyoung/quic-go/internal/handshake"
+	"github.com/holandyoung/quic-go/internal/monotime"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/qerr"
+	"github.com/holandyoung/quic-go/internal/utils"
+	"github.com/holandyoung/quic-go/internal/utils/ringbuffer"
+	"github.com/holandyoung/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/qlog"
+	"github.com/holandyoung/quic-go/qlogwriter"
 )
 
 type unpacker interface {
@@ -209,7 +209,9 @@ type Conn struct {
 	// pacingDeadline is the time when the next packet should be sent
 	pacingDeadline monotime.Time
 
-	peerParams *wire.TransportParameters
+	// Received parameters are immutable after validation. Stream and datagram
+	// owners apply their sending policy at restoration or handshake completion.
+	peerParams atomic.Pointer[wire.TransportParameters]
 
 	timer *time.Timer
 	// keepAlivePingSent stores whether a keep alive PING is in flight.
@@ -765,10 +767,6 @@ func (c *Conn) Context() context.Context {
 	return c.ctx
 }
 
-func (c *Conn) supportsDatagrams() bool {
-	return c.peerParams.MaxDatagramFrameSize > 0
-}
-
 // ConnectionState returns basic details about the QUIC connection.
 func (c *Conn) ConnectionState() ConnectionState {
 	c.connStateMutex.Lock()
@@ -777,9 +775,9 @@ func (c *Conn) ConnectionState() ConnectionState {
 	cs := c.cryptoStreamHandler.ConnectionState()
 	c.connState.TLS = cs.ConnectionState
 	c.connState.Used0RTT = cs.Used0RTT
-	if c.peerParams != nil {
-		c.connState.SupportsDatagrams.Remote = c.supportsDatagrams()
-		c.connState.SupportsStreamResetPartialDelivery.Remote = c.peerParams.EnableResetStreamAt
+	if params := c.peerParams.Load(); params != nil {
+		c.connState.SupportsDatagrams.Remote = params.MaxDatagramFrameSize > 0
+		c.connState.SupportsStreamResetPartialDelivery.Remote = params.EnableResetStreamAt
 	}
 	c.connState.SupportsDatagrams.Local = c.config.EnableDatagrams
 	c.connState.SupportsStreamResetPartialDelivery.Local = c.config.EnableStreamResetPartialDelivery
@@ -914,8 +912,8 @@ func (c *Conn) switchToNewPath(tr *Transport, now monotime.Time) {
 	initialPacketSize := protocol.ByteCount(c.config.InitialPacketSize)
 	c.sentPacketHandler.MigratedPath(now, initialPacketSize)
 	maxPacketSize := protocol.ByteCount(protocol.MaxPacketBufferSize)
-	if c.peerParams.MaxUDPPayloadSize > 0 && c.peerParams.MaxUDPPayloadSize < maxPacketSize {
-		maxPacketSize = c.peerParams.MaxUDPPayloadSize
+	if params := c.peerParams.Load(); params.MaxUDPPayloadSize > 0 && params.MaxUDPPayloadSize < maxPacketSize {
+		maxPacketSize = params.MaxUDPPayloadSize
 	}
 	c.mtuDiscoverer.Reset(now, initialPacketSize, maxPacketSize)
 	c.conn = newSendConn(tr.conn, c.conn.RemoteAddr(), packetInfo{}, utils.DefaultLogger) // TODO: find a better way
@@ -1294,8 +1292,8 @@ func (c *Conn) handleShortHeaderPacket(
 	c.pathManager.SwitchToPath(p.remoteAddr)
 	c.sentPacketHandler.MigratedPath(p.rcvTime, protocol.ByteCount(c.config.InitialPacketSize))
 	maxPacketSize := protocol.ByteCount(protocol.MaxPacketBufferSize)
-	if c.peerParams.MaxUDPPayloadSize > 0 && c.peerParams.MaxUDPPayloadSize < maxPacketSize {
-		maxPacketSize = c.peerParams.MaxUDPPayloadSize
+	if params := c.peerParams.Load(); params.MaxUDPPayloadSize > 0 && params.MaxUDPPayloadSize < maxPacketSize {
+		maxPacketSize = params.MaxUDPPayloadSize
 	}
 	c.mtuDiscoverer.Reset(
 		p.rcvTime,
@@ -2310,6 +2308,7 @@ func (c *Conn) dropEncryptionLevel(encLevel protocol.EncryptionLevel, now monoti
 		c.cryptoStreamHandler.DiscardInitialKeys()
 	case protocol.Encryption0RTT:
 		c.streamsMap.ResetFor0RTT()
+		c.datagramQueue.Reject0RTT()
 		c.framer.Handle0RTTRejection()
 		return c.connFlowController.Reset()
 	}
@@ -2347,10 +2346,11 @@ func (c *Conn) restoreTransportParameters(params *wire.TransportParameters) {
 		})
 	}
 
-	c.peerParams = params
+	c.peerParams.Store(params)
 	c.connIDGenerator.SetMaxActiveConnIDs(params.ActiveConnectionIDLimit)
 	c.connFlowController.UpdateSendWindow(params.InitialMaxData)
 	c.streamsMap.HandleTransportParameters(params)
+	c.datagramQueue.ApplyTransportParameters(params.MaxDatagramFrameSize, true)
 }
 
 func (c *Conn) handleTransportParameters(params *wire.TransportParameters) error {
@@ -2364,14 +2364,14 @@ func (c *Conn) handleTransportParameters(params *wire.TransportParameters) error
 		}
 	}
 
-	if c.perspective == protocol.PerspectiveClient && c.peerParams != nil && c.ConnectionState().Used0RTT && !params.ValidForUpdate(c.peerParams) {
+	if previous := c.peerParams.Load(); c.perspective == protocol.PerspectiveClient && previous != nil && c.ConnectionState().Used0RTT && !params.ValidForUpdate(previous) {
 		return &qerr.TransportError{
 			ErrorCode:    qerr.ProtocolViolation,
 			ErrorMessage: "server sent reduced limits after accepting 0-RTT data",
 		}
 	}
 
-	c.peerParams = params
+	c.peerParams.Store(params)
 	// On the client side we have to wait for handshake completion.
 	// During a 0-RTT connection, we are only allowed to use the new transport parameters for 1-RTT packets.
 	if c.perspective == protocol.PerspectiveServer {
@@ -2414,7 +2414,7 @@ func (c *Conn) checkTransportParameters(params *wire.TransportParameters) error 
 }
 
 func (c *Conn) applyTransportParameters() {
-	params := c.peerParams
+	params := c.peerParams.Load()
 	// Our local idle timeout will always be > 0.
 	c.idleTimeout = c.config.MaxIdleTimeout
 	// If the peer advertised an idle timeout, take the minimum of the values.
@@ -2445,6 +2445,7 @@ func (c *Conn) applyTransportParameters() {
 		maxPacketSize,
 		c.qlogger,
 	)
+	c.datagramQueue.ApplyTransportParameters(params.MaxDatagramFrameSize, false)
 }
 
 func (c *Conn) triggerSending(now monotime.Time) error {
@@ -2931,15 +2932,7 @@ func (c *Conn) OpenUniStreamSync(ctx context.Context) (*SendStream, error) {
 	return c.streamsMap.OpenUniStreamSync(ctx)
 }
 
-func (c *Conn) newFlowController(id protocol.StreamID) *streamFlowController {
-	initialSendWindow := c.peerParams.InitialMaxStreamDataUni
-	if protocol.StreamTypeOf(id) == protocol.StreamTypeBidi {
-		if protocol.StreamInitiator(id) == c.perspective {
-			initialSendWindow = c.peerParams.InitialMaxStreamDataBidiRemote
-		} else {
-			initialSendWindow = c.peerParams.InitialMaxStreamDataBidiLocal
-		}
-	}
+func (c *Conn) newFlowController(id protocol.StreamID, initialSendWindow protocol.ByteCount) *streamFlowController {
 	return newStreamFlowController(
 		id,
 		c.connFlowController,
@@ -3024,24 +3017,11 @@ func (c *Conn) onStreamCompleted(id protocol.StreamID) {
 // The payload of the datagram needs to fit into a single QUIC packet.
 // In addition, a datagram may be dropped before being sent out if the available packet size suddenly decreases.
 // If the payload is too large to be sent at the current time, a DatagramTooLargeError is returned.
+// If 0-RTT is rejected while waiting for queue capacity, Err0RTTRejected is returned.
 func (c *Conn) SendDatagram(p []byte) error {
-	if !c.supportsDatagrams() {
-		return errors.New("datagram support disabled")
-	}
-
-	f := &wire.DatagramFrame{DataLenPresent: true}
 	// The payload size estimate is conservative.
 	// Under many circumstances we could send a few more bytes.
-	maxDataLen := min(
-		f.MaxDataLen(c.peerParams.MaxDatagramFrameSize, c.version),
-		protocol.ByteCount(c.maxPayloadSizeEstimate.Load()),
-	)
-	if protocol.ByteCount(len(p)) > maxDataLen {
-		return &DatagramTooLargeError{MaxDatagramPayloadSize: int64(maxDataLen)}
-	}
-	f.Data = make([]byte, len(p))
-	copy(f.Data, p)
-	return c.datagramQueue.Add(f)
+	return c.datagramQueue.Add(p, protocol.ByteCount(c.maxPayloadSizeEstimate.Load()), c.version)
 }
 
 // ReceiveDatagram gets a message received in a QUIC datagram, as specified in RFC 9221.
@@ -3085,7 +3065,7 @@ func (c *Conn) AddPath(t *Transport) (*Path, error) {
 	if c.perspective == protocol.PerspectiveServer {
 		return nil, errors.New("server cannot initiate connection migration")
 	}
-	if c.peerParams.DisableActiveMigration {
+	if params := c.peerParams.Load(); params != nil && params.DisableActiveMigration {
 		return nil, errors.New("server disabled connection migration")
 	}
 	if err := t.init(false); err != nil {

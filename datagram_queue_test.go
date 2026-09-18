@@ -5,8 +5,9 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/quic-go/quic-go/internal/utils"
-	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/utils"
+	"github.com/holandyoung/quic-go/internal/wire"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,27 +15,27 @@ import (
 
 func TestDatagramQueuePeekAndPop(t *testing.T) {
 	var queued []struct{}
-	queue := newDatagramQueue(func() { queued = append(queued, struct{}{}) }, utils.DefaultLogger)
+	queue := newTestDatagramQueue(func() { queued = append(queued, struct{}{}) }, utils.DefaultLogger)
 	require.Nil(t, queue.Peek())
 	require.Empty(t, queued)
-	require.NoError(t, queue.Add(&wire.DatagramFrame{Data: []byte("foo")}))
+	require.NoError(t, queue.Add([]byte("foo"), protocol.MaxByteCount, protocol.Version1))
 	require.Len(t, queued, 1)
-	require.Equal(t, &wire.DatagramFrame{Data: []byte("foo")}, queue.Peek())
+	require.Equal(t, &wire.DatagramFrame{DataLenPresent: true, Data: []byte("foo")}, queue.Peek())
 	// calling peek again returns the same datagram
-	require.Equal(t, &wire.DatagramFrame{Data: []byte("foo")}, queue.Peek())
+	require.Equal(t, &wire.DatagramFrame{DataLenPresent: true, Data: []byte("foo")}, queue.Peek())
 	queue.Pop()
 	require.Nil(t, queue.Peek())
 }
 
 func TestDatagramQueueSendQueueLength(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		queue := newDatagramQueue(func() {}, utils.DefaultLogger)
+		queue := newTestDatagramQueue(func() {}, utils.DefaultLogger)
 
 		for range maxDatagramSendQueueLen {
-			require.NoError(t, queue.Add(&wire.DatagramFrame{Data: []byte{0}}))
+			require.NoError(t, queue.Add([]byte{0}, protocol.MaxByteCount, protocol.Version1))
 		}
 		errChan := make(chan error, 1)
-		go func() { errChan <- queue.Add(&wire.DatagramFrame{Data: []byte("foobar")}) }()
+		go func() { errChan <- queue.Add([]byte("foobar"), protocol.MaxByteCount, protocol.Version1) }()
 
 		synctest.Wait()
 
@@ -68,12 +69,12 @@ func TestDatagramQueueSendQueueLength(t *testing.T) {
 		}
 		f := queue.Peek()
 		require.NotNil(t, f)
-		require.Equal(t, &wire.DatagramFrame{Data: []byte("foobar")}, f)
+		require.Equal(t, &wire.DatagramFrame{DataLenPresent: true, Data: []byte("foobar")}, f)
 	})
 }
 
 func TestDatagramQueueReceive(t *testing.T) {
-	queue := newDatagramQueue(func() {}, utils.DefaultLogger)
+	queue := newTestDatagramQueue(func() {}, utils.DefaultLogger)
 
 	// receive frames that were received earlier
 	queue.HandleDatagramFrame(&wire.DatagramFrame{Data: []byte("foo")})
@@ -88,7 +89,7 @@ func TestDatagramQueueReceive(t *testing.T) {
 
 func TestDatagramQueueReceiveBlocking(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		queue := newDatagramQueue(func() {}, utils.DefaultLogger)
+		queue := newTestDatagramQueue(func() {}, utils.DefaultLogger)
 
 		// block until a new frame is received
 		type result struct {
@@ -147,13 +148,13 @@ func TestDatagramQueueReceiveBlocking(t *testing.T) {
 
 func TestDatagramQueueClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		queue := newDatagramQueue(func() {}, utils.DefaultLogger)
+		queue := newTestDatagramQueue(func() {}, utils.DefaultLogger)
 
 		for range maxDatagramSendQueueLen {
-			require.NoError(t, queue.Add(&wire.DatagramFrame{Data: []byte{0}}))
+			require.NoError(t, queue.Add([]byte{0}, protocol.MaxByteCount, protocol.Version1))
 		}
 		errChan1 := make(chan error, 1)
-		go func() { errChan1 <- queue.Add(&wire.DatagramFrame{Data: []byte("foobar")}) }()
+		go func() { errChan1 <- queue.Add([]byte("foobar"), protocol.MaxByteCount, protocol.Version1) }()
 		errChan2 := make(chan error, 1)
 		go func() {
 			_, err := queue.Receive(context.Background())
@@ -177,4 +178,27 @@ func TestDatagramQueueClose(t *testing.T) {
 			t.Fatal("should have received an error")
 		}
 	})
+}
+
+func TestDatagramQueueEffectiveLimits(t *testing.T) {
+	queue := newDatagramQueue(func() {}, utils.DefaultLogger)
+	require.ErrorIs(t, queue.Add(nil, 100, protocol.Version1), errDatagramsDisabled)
+	// A frame with a length field needs two bytes even for an empty payload.
+	queue.ApplyTransportParameters(1, false)
+	var tooLarge *DatagramTooLargeError
+	require.ErrorAs(t, queue.Add(nil, 100, protocol.Version1), &tooLarge)
+	queue.ApplyTransportParameters(2, false)
+	require.NoError(t, queue.Add(nil, 100, protocol.Version1))
+	require.EqualValues(t, 2, queue.Peek().Length(protocol.Version1))
+	queue.Pop()
+	queue.ApplyTransportParameters(100, false)
+	require.ErrorAs(t, queue.Add([]byte("large"), 4, protocol.Version1), &tooLarge)
+	require.EqualValues(t, 4, tooLarge.MaxDatagramPayloadSize)
+	require.NoError(t, queue.Add([]byte("fits"), 4, protocol.Version1))
+}
+
+func newTestDatagramQueue(hasData func(), logger utils.Logger) *datagramQueue {
+	q := newDatagramQueue(hasData, logger)
+	q.ApplyTransportParameters(16383, false)
+	return q
 }

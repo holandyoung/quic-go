@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/qerr"
-	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/internal/monotime"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/qerr"
+	"github.com/holandyoung/quic-go/internal/wire"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +48,7 @@ func testStreamsMapCreatingStreams(t *testing.T,
 		context.Background(),
 		mockSender,
 		func(wire.Frame) {},
-		newTestStreamFlowController,
+		newTestStreamFlowControllerWithSendWindow,
 		1,
 		1,
 		perspective,
@@ -121,7 +121,7 @@ func testStreamsMapDeletingStreams(t *testing.T,
 		context.Background(),
 		mockSender,
 		func(frame wire.Frame) { frameQueue = append(frameQueue, frame) },
-		newTestStreamFlowController,
+		newTestStreamFlowControllerWithSendWindow,
 		100,
 		100,
 		perspective,
@@ -204,7 +204,7 @@ func testStreamsMapStreamLimits(t *testing.T, perspective protocol.Perspective) 
 		context.Background(),
 		mockSender,
 		func(frame wire.Frame) { frameQueue = append(frameQueue, frame) },
-		newTestStreamFlowController,
+		newTestStreamFlowControllerWithSendWindow,
 		100,
 		100,
 		perspective,
@@ -294,9 +294,9 @@ func testStreamsMapHandleReceiveStreamFrames(t *testing.T, pers protocol.Perspec
 		context.Background(),
 		mockSender,
 		func(frame wire.Frame) {},
-		func(id protocol.StreamID) *streamFlowController {
+		func(id protocol.StreamID, window protocol.ByteCount) *streamFlowController {
 			streamsCreated = append(streamsCreated, id)
-			return newTestStreamFlowController(id)
+			return newTestStreamFlowControllerWithSendWindow(id, window)
 		},
 		100,
 		100,
@@ -405,9 +405,9 @@ func testStreamsMapHandleSendStreamFrames(t *testing.T, pers protocol.Perspectiv
 		context.Background(),
 		mockSender,
 		func(frame wire.Frame) {},
-		func(id protocol.StreamID) *streamFlowController {
+		func(id protocol.StreamID, window protocol.ByteCount) *streamFlowController {
 			streamsCreated = append(streamsCreated, id)
-			return newTestStreamFlowController(id)
+			return newTestStreamFlowControllerWithSendWindow(id, window)
 		},
 		100,
 		100,
@@ -488,7 +488,7 @@ func TestStreamsMapClosing(t *testing.T) {
 		context.Background(),
 		mockSender,
 		func(wire.Frame) {},
-		newTestStreamFlowController,
+		newTestStreamFlowControllerWithSendWindow,
 		1,
 		1,
 		protocol.PerspectiveClient,
@@ -512,8 +512,8 @@ func TestStreamsMap0RTT(t *testing.T) {
 		context.Background(),
 		mockSender,
 		func(wire.Frame) {},
-		func(id protocol.StreamID) *streamFlowController {
-			fc := newTestStreamFlowController(id)
+		func(id protocol.StreamID, window protocol.ByteCount) *streamFlowController {
+			fc := newTestStreamFlowControllerWithSendWindow(id, window)
 			fcs = append(fcs, fc)
 			return fc
 		},
@@ -553,7 +553,7 @@ func TestStreamsMap0RTTResetStreamAt(t *testing.T) {
 				context.Background(),
 				mockSender,
 				func(wire.Frame) {},
-				func(id protocol.StreamID) *streamFlowController {
+				func(id protocol.StreamID, window protocol.ByteCount) *streamFlowController {
 					return newTestStreamFlowControllerWithSendWindow(id, 1)
 				},
 				1,
@@ -580,7 +580,7 @@ func TestStreamsMap0RTTRejection(t *testing.T) {
 		context.Background(),
 		mockSender,
 		func(wire.Frame) {},
-		newTestStreamFlowController,
+		newTestStreamFlowControllerWithSendWindow,
 		1,
 		1,
 		protocol.PerspectiveClient,
@@ -622,7 +622,7 @@ func testStreamsMap0RTTRejectionResetStreamAt(t *testing.T, enabled bool) {
 		context.Background(),
 		mockSender,
 		func(wire.Frame) {},
-		func(id protocol.StreamID) *streamFlowController {
+		func(id protocol.StreamID, window protocol.ByteCount) *streamFlowController {
 			return newTestStreamFlowControllerWithSendWindow(id, 1)
 		},
 		2,

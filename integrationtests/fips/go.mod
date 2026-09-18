@@ -1,9 +1,9 @@
-module github.com/quic-go/quic-go/integrationtests/fips
+module github.com/holandyoung/quic-go/integrationtests/fips
 
 go 1.26.0
 
 // The version doesn't matter here, as we're replacing it with the currently checked out code anyway.
-require github.com/quic-go/quic-go v0.60.0
+require github.com/holandyoung/quic-go v0.60.0
 
 require github.com/stretchr/testify v1.11.1
 
@@ -17,4 +17,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/quic-go/quic-go => ../../
+replace github.com/holandyoung/quic-go => ../../

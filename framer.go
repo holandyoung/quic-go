@@ -4,12 +4,12 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/quic-go/quic-go/internal/ackhandler"
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/utils/ringbuffer"
-	"github.com/quic-go/quic-go/internal/wire"
-	"github.com/quic-go/quic-go/quicvarint"
+	"github.com/holandyoung/quic-go/internal/ackhandler"
+	"github.com/holandyoung/quic-go/internal/monotime"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/utils/ringbuffer"
+	"github.com/holandyoung/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/quicvarint"
 )
 
 const (

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/qerr"
-	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/qerr"
+	"github.com/holandyoung/quic-go/internal/wire"
 )
 
 type incomingStream interface {
@@ -33,7 +33,8 @@ type incomingStreamsMap[T incomingStream] struct {
 	maxStream          protocol.StreamID // the highest stream that the peer is allowed to open
 	maxNumStreams      uint64            // maximum number of streams
 
-	newStream        func(protocol.StreamID) T
+	parameters       streamSendParameters
+	newStream        func(protocol.StreamID, streamSendParameters) T
 	queueMaxStreamID func(*wire.MaxStreamsFrame)
 
 	closeErr error
@@ -41,7 +42,7 @@ type incomingStreamsMap[T incomingStream] struct {
 
 func newIncomingStreamsMap[T incomingStream](
 	streamType protocol.StreamType,
-	newStream func(protocol.StreamID) T,
+	newStream func(protocol.StreamID, streamSendParameters) T,
 	maxStreams uint64,
 	queueControlFrame func(wire.Frame),
 	pers protocol.Perspective,
@@ -67,6 +68,18 @@ func newIncomingStreamsMap[T incomingStream](
 		nextStreamToOpen:   nextStreamToAccept,
 		nextStreamToAccept: nextStreamToAccept,
 		queueMaxStreamID:   func(f *wire.MaxStreamsFrame) { queueControlFrame(f) },
+	}
+}
+
+// UpdateStreamParameters serializes parameter application with peer-driven stream
+// creation, including streams that have not yet been accepted by the application.
+// update must not call back into the registry.
+func (m *incomingStreamsMap[T]) UpdateStreamParameters(parameters streamSendParameters, update func(T)) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.parameters = parameters
+	for _, entry := range m.streams {
+		update(entry.stream)
 	}
 }
 
@@ -140,7 +153,7 @@ func (m *incomingStreamsMap[T]) GetOrOpenStream(id protocol.StreamID) (T, error)
 	// * maxStream can only increase, so if the id was valid before, it definitely is valid now
 	// * highestStream is only modified by this function
 	for newNum := m.nextStreamToOpen; newNum <= id; newNum += 4 {
-		m.streams[newNum] = incomingStreamEntry[T]{stream: m.newStream(newNum)}
+		m.streams[newNum] = incomingStreamEntry[T]{stream: m.newStream(newNum, m.parameters)}
 		select {
 		case m.newStreamChan <- struct{}{}:
 		default:

@@ -7,9 +7,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/qerr"
-	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/qerr"
+	"github.com/holandyoung/quic-go/internal/wire"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +51,7 @@ func testStreamsMapIncomingGettingStreams(t *testing.T, perspective protocol.Per
 	const maxNumStreams = 10
 	m := newIncomingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *mockStream {
+		func(id protocol.StreamID, params streamSendParameters) *mockStream {
 			newStreamCounter++
 			return &mockStream{id: id}
 		},
@@ -96,7 +96,7 @@ func TestStreamsMapIncomingAcceptingStreams(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newIncomingStreamsMap(
 			protocol.StreamTypeUni,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			5,
 			func(f wire.Frame) {},
 			protocol.PerspectiveClient,
@@ -169,7 +169,7 @@ func testStreamsMapIncomingDeletingStreams(t *testing.T, perspective protocol.Pe
 	var frameQueue []wire.Frame
 	m := newIncomingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+		func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 		5,
 		func(f wire.Frame) { frameQueue = append(frameQueue, f) },
 		perspective,
@@ -224,7 +224,7 @@ func testStreamsMapIncomingDeletingStreamsWithHighLimits(t *testing.T, pers prot
 	var frameQueue []wire.Frame
 	m := newIncomingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+		func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 		uint64(protocol.MaxStreamCount-2),
 		func(f wire.Frame) { frameQueue = append(frameQueue, f) },
 		pers,
@@ -261,7 +261,7 @@ func TestStreamsMapIncomingClosing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newIncomingStreamsMap(
 			protocol.StreamTypeUni,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			5,
 			func(f wire.Frame) {},
 			protocol.PerspectiveServer,
@@ -312,7 +312,7 @@ func TestStreamsMapIncomingRandomized(t *testing.T) {
 
 		m := newIncomingStreamsMap(
 			streamType,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			num,
 			func(f wire.Frame) {},
 			protocol.PerspectiveServer,

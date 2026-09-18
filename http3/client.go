@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/holandyoung/quic-go"
+	"github.com/holandyoung/quic-go/http3/qlog"
+	"github.com/holandyoung/quic-go/qlogwriter"
 	"github.com/quic-go/qpack"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3/qlog"
-	"github.com/quic-go/quic-go/qlogwriter"
 )
 
 const (

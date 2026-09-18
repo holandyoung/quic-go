@@ -8,7 +8,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ "ubuntu" ]
-        go: [ "1.25.x", "1.26.x", "1.27.0-rc.1" ]
+        go: [ "1.25.x", "1.26.x", "1.27.1" ]
         race: [ false ]
         include:
           - os: "ubuntu"
@@ -30,8 +30,8 @@ jobs:
       TIMESCALE_FACTOR: 3
     name: "Integration (${{ matrix.os }}, Go ${{ matrix.go }}${{ matrix.race && ', race' || '' }})"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -73,17 +73,8 @@ jobs:
         run: go test -v -run=^$ -timeout 5m -shuffle=on -bench=. ./integrationtests/self
       - name: save qlogs
         if: ${{ always() && env.DEBUG == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: qlogs-${{ matrix.os }}-go${{ matrix.go }}-race${{ matrix.race }}
           path: integrationtests/self/*.qlog
           retention-days: 7
-      - name: Upload report to Codecov
-        if: ${{ !cancelled() && !matrix.race }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          report_type: test_results
-          name: Unit tests
-          files: report_tools.xml,report_versionnegotiation.xml,report_self.xml,report_self_v2.xml,report_self_nogso.xml,report_self_noecn.xml,report_fips.xml
-          env_vars: OS,GO
-          token: ${{ secrets.CODECOV_TOKEN }}
