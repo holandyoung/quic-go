@@ -3,10 +3,11 @@
 package wire
 
 import (
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/stretchr/testify/require"
 )
 
 // Allocation assertions require an uninstrumented allocator. The race runtime

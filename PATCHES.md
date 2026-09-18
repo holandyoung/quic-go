@@ -29,8 +29,18 @@ defect described in <https://github.com/quic-go/quic-go/issues/4303>.
   available before handshake completion. Normal non-0-RTT connections allocate
   no additional broadcast channel; blocked calls copy only upon admission.
 
-No exported API changes, protocol fallback, compatibility shim, unsafe access
-or duplicated transport implementation is introduced.
+No exported API shape changes, protocol fallback, compatibility shim, unsafe
+access or duplicated transport implementation is introduced.
+
+## Module identity
+
+The fork declares `github.com/holandyoung/quic-go`. Both dnsproxy and
+HyperCacheDNS import and require that module directly at one immutable revision;
+their production graphs must not contain the official QUIC module in parallel
+or a `replace` directive. Internal imports, generated mocks, fuzzers, nested
+integration fixtures and interop linker flags use the same identity. The
+independent upstream qpack and fuzz-seed modules retain their native identities.
+Upstream source, issue, documentation and attribution URLs remain official.
 
 ## Upstream-first maintenance and retirement
 
@@ -43,8 +53,8 @@ compare it with this patch family before deciding to carry any patch forward.
 
 If official code supplies the required behavior, run the same early-stream,
 rejection, DATAGRAM, race and consumer regressions against it. Once equivalent
-behavior is verified, switch both dnsproxy and HyperCacheDNS to the official
-module, remove their fork replacements and provenance entries, and retire the
+behavior is verified, switch both dnsproxy and HyperCacheDNS imports and pinned
+requirements to the official module, remove fork provenance entries, and retire the
 corresponding local patches. Do not retain duplicate or compatibility paths.
 This fork is temporary defect repair, not a permanent alternative transport.
 

@@ -5,10 +5,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/monotime"
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/qerr"
-	"github.com/quic-go/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/internal/monotime"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/qerr"
+	"github.com/holandyoung/quic-go/internal/wire"
 )
 
 type connRunnerCallbacks struct {

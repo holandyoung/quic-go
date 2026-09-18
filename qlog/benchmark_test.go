@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/protocol"
-	"github.com/quic-go/quic-go/internal/utils"
-	"github.com/quic-go/quic-go/internal/wire"
-	"github.com/quic-go/quic-go/qlogwriter"
+	"github.com/holandyoung/quic-go/internal/protocol"
+	"github.com/holandyoung/quic-go/internal/utils"
+	"github.com/holandyoung/quic-go/internal/wire"
+	"github.com/holandyoung/quic-go/qlogwriter"
 )
 
 type nopWriteCloserImpl struct{ io.Writer }

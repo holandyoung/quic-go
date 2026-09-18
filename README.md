@@ -1,3 +1,9 @@
+> This is HyperCacheDNS's temporary defect-repair fork of official quic-go
+> v0.61.0. Its module is `github.com/holandyoung/quic-go`. See [PATCHES.md](PATCHES.md)
+> for the bounded changes, validation and mandatory return to official code when
+> an equivalent fix is available. The documentation and badges below refer to
+> the upstream project; they are not evidence of this fork's checks.
+
 <div align="center" style="margin-bottom: 15px;">
   <img src="./assets/quic-go-logo.png" width="700" height="auto">
 </div>
