@@ -29,7 +29,9 @@ func TestStreamsMapOutgoingOpenAndDelete(t *testing.T) {
 func testStreamsMapOutgoingOpenAndDelete(t *testing.T, perspective protocol.Perspective, firstStream protocol.StreamID) {
 	m := newOutgoingStreamsMap(
 		protocol.StreamTypeBidi,
-		func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+		func(id protocol.StreamID, params streamSendParameters) *mockStream {
+			return &mockStream{id: id, sendWindow: params.window, supportsResetStreamAt: params.reset}
+		},
 		func(f wire.Frame) {},
 		perspective,
 	)
@@ -50,15 +52,20 @@ func testStreamsMapOutgoingOpenAndDelete(t *testing.T, perspective protocol.Pers
 	require.NoError(t, err)
 	require.Equal(t, firstStream+4, str2.id)
 
-	// update send window
-	m.UpdateSendWindow(1000)
+	// One registry operation updates existing streams and future creation.
+	m.UpdateStreamParameters(
+		streamSendParameters{window: 1000, reset: true},
+		func(s *mockStream) { applyStreamSendParameters(s, 1000, true) },
+	)
 	require.Equal(t, protocol.ByteCount(1000), str1.sendWindow)
 	require.Equal(t, protocol.ByteCount(1000), str2.sendWindow)
 
-	// enable reset stream at
-	m.EnableResetStreamAt()
 	require.True(t, str1.supportsResetStreamAt)
 	require.True(t, str2.supportsResetStreamAt)
+	str3, err := m.OpenStream()
+	require.NoError(t, err)
+	require.Equal(t, protocol.ByteCount(1000), str3.sendWindow)
+	require.True(t, str3.supportsResetStreamAt)
 
 	err = m.DeleteStream(firstStream + 1337*4)
 	require.Error(t, err)
@@ -89,7 +96,7 @@ func testStreamsMapOutgoingLimits(t *testing.T, perspective protocol.Perspective
 	synctest.Test(t, func(t *testing.T) {
 		m := newOutgoingStreamsMap(
 			protocol.StreamTypeUni,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) {},
 			perspective,
 		)
@@ -163,7 +170,7 @@ func TestStreamsMapOutgoingOpenStreamSyncCancel(t *testing.T) {
 	queued := make(chan struct{}, 1)
 	m := newOutgoingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+		func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 		func(f wire.Frame) { queued <- struct{}{} },
 		protocol.PerspectiveClient,
 	)
@@ -205,7 +212,7 @@ func TestStreamsMapOutgoingConcurrentOpenStreamSync(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newOutgoingStreamsMap(
 			protocol.StreamTypeUni,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) {},
 			protocol.PerspectiveClient,
 		)
@@ -262,7 +269,7 @@ func TestStreamsMapOutgoingClosing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newOutgoingStreamsMap(
 			protocol.StreamTypeUni,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) {},
 			protocol.PerspectiveServer,
 		)
@@ -303,7 +310,7 @@ func TestStreamsMapOutgoingBlockedFrames(t *testing.T) {
 		var frameQueue []wire.Frame
 		m := newOutgoingStreamsMap(
 			protocol.StreamTypeBidi,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) { frameQueue = append(frameQueue, f) },
 			protocol.PerspectiveClient,
 		)
@@ -381,7 +388,7 @@ func TestStreamsMapOutgoingRandomizedOpenStreamSync(t *testing.T) {
 		frameQueue := make(chan wire.Frame, n)
 		m := newOutgoingStreamsMap(
 			streamType,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) { frameQueue <- f },
 			protocol.PerspectiveServer,
 		)
@@ -471,7 +478,7 @@ func TestStreamsMapOutgoingRandomizedWithCancellation(t *testing.T) {
 		frameQueue := make(chan wire.Frame, n)
 		m := newOutgoingStreamsMap(
 			streamType,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) { frameQueue <- f },
 			protocol.PerspectiveClient,
 		)
@@ -584,7 +591,7 @@ func testStreamsMapConcurrent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newOutgoingStreamsMap(
 			protocol.StreamTypeBidi,
-			func(id protocol.StreamID) *mockStream { return &mockStream{id: id} },
+			func(id protocol.StreamID, params streamSendParameters) *mockStream { return &mockStream{id: id} },
 			func(f wire.Frame) {},
 			protocol.PerspectiveClient,
 		)

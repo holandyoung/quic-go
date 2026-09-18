@@ -27,22 +27,28 @@ type streamsMap struct {
 
 	sender            streamSender
 	queueControlFrame func(wire.Frame)
-	newFlowController func(protocol.StreamID) *streamFlowController
+	newFlowController func(protocol.StreamID, protocol.ByteCount) *streamFlowController
 
-	mutex                 sync.Mutex
-	outgoingBidiStreams   *outgoingStreamsMap[*Stream]
-	outgoingUniStreams    *outgoingStreamsMap[*SendStream]
-	incomingBidiStreams   *incomingStreamsMap[*Stream]
-	incomingUniStreams    *incomingStreamsMap[*ReceiveStream]
-	reset                 bool
-	supportsResetStreamAt bool
+	mutex               sync.Mutex
+	outgoingBidiStreams *outgoingStreamsMap[*Stream]
+	outgoingUniStreams  *outgoingStreamsMap[*SendStream]
+	incomingBidiStreams *incomingStreamsMap[*Stream]
+	incomingUniStreams  *incomingStreamsMap[*ReceiveStream]
+	reset               bool
+}
+
+// streamSendParameters belongs to one registry generation. Its mutex protects
+// both parameter replacement and creation of streams from the current values.
+type streamSendParameters struct {
+	window protocol.ByteCount
+	reset  bool
 }
 
 func newStreamsMap(
 	ctx context.Context,
 	sender streamSender,
 	queueControlFrame func(wire.Frame),
-	newFlowController func(protocol.StreamID) *streamFlowController,
+	newFlowController func(protocol.StreamID, protocol.ByteCount) *streamFlowController,
 	maxIncomingBidiStreams uint64,
 	maxIncomingUniStreams uint64,
 	perspective protocol.Perspective,
@@ -63,33 +69,27 @@ func newStreamsMap(
 func (m *streamsMap) initMaps() {
 	m.outgoingBidiStreams = newOutgoingStreamsMap(
 		protocol.StreamTypeBidi,
-		func(id protocol.StreamID) *Stream {
-			return newStream(m.ctx, id, m.sender, m.newFlowController(id), m.supportsResetStreamAt)
-		},
+		m.newBidiStream,
 		m.queueControlFrame,
 		m.perspective,
 	)
 	m.incomingBidiStreams = newIncomingStreamsMap(
 		protocol.StreamTypeBidi,
-		func(id protocol.StreamID) *Stream {
-			return newStream(m.ctx, id, m.sender, m.newFlowController(id), m.supportsResetStreamAt)
-		},
+		m.newBidiStream,
 		m.maxIncomingBidiStreams,
 		m.queueControlFrame,
 		m.perspective,
 	)
 	m.outgoingUniStreams = newOutgoingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *SendStream {
-			return newSendStream(m.ctx, id, m.sender, m.newFlowController(id), m.supportsResetStreamAt)
-		},
+		m.newUniStream,
 		m.queueControlFrame,
 		m.perspective,
 	)
 	m.incomingUniStreams = newIncomingStreamsMap(
 		protocol.StreamTypeUni,
-		func(id protocol.StreamID) *ReceiveStream {
-			return newReceiveStream(id, m.sender, m.newFlowController(id))
+		func(id protocol.StreamID, _ streamSendParameters) *ReceiveStream {
+			return newReceiveStream(id, m.sender, m.newFlowController(id, 0))
 		},
 		m.maxIncomingUniStreams,
 		m.queueControlFrame,
@@ -317,15 +317,41 @@ func (m *streamsMap) HandleStreamFrame(f *wire.StreamFrame, rcvTime monotime.Tim
 }
 
 func (m *streamsMap) HandleTransportParameters(p *wire.TransportParameters) {
-	m.supportsResetStreamAt = p.EnableResetStreamAt
-	if p.EnableResetStreamAt {
-		m.outgoingBidiStreams.EnableResetStreamAt()
-		m.outgoingUniStreams.EnableResetStreamAt()
-	}
-	m.outgoingBidiStreams.UpdateSendWindow(p.InitialMaxStreamDataBidiRemote)
+	// Each registry publishes its creation parameters and updates every existing
+	// stream in the same critical section used for stream creation. No opener
+	// can miss the update or read the connection loop's pending parameters.
+	m.outgoingBidiStreams.UpdateStreamParameters(
+		streamSendParameters{window: p.InitialMaxStreamDataBidiRemote, reset: p.EnableResetStreamAt},
+		func(s *Stream) { applyStreamSendParameters(s, p.InitialMaxStreamDataBidiRemote, p.EnableResetStreamAt) },
+	)
 	m.outgoingBidiStreams.SetMaxStream(p.MaxBidiStreamNum.StreamID(protocol.StreamTypeBidi, m.perspective))
-	m.outgoingUniStreams.UpdateSendWindow(p.InitialMaxStreamDataUni)
+	m.outgoingUniStreams.UpdateStreamParameters(
+		streamSendParameters{window: p.InitialMaxStreamDataUni, reset: p.EnableResetStreamAt},
+		func(s *SendStream) { applyStreamSendParameters(s, p.InitialMaxStreamDataUni, p.EnableResetStreamAt) },
+	)
 	m.outgoingUniStreams.SetMaxStream(p.MaxUniStreamNum.StreamID(protocol.StreamTypeUni, m.perspective))
+	// Incoming bidirectional streams may already exist from the server's
+	// 0.5-RTT data, even before the client finishes its handshake.
+	m.incomingBidiStreams.UpdateStreamParameters(
+		streamSendParameters{window: p.InitialMaxStreamDataBidiLocal, reset: p.EnableResetStreamAt},
+		func(s *Stream) { applyStreamSendParameters(s, p.InitialMaxStreamDataBidiLocal, p.EnableResetStreamAt) },
+	)
+}
+
+func (m *streamsMap) newBidiStream(id protocol.StreamID, params streamSendParameters) *Stream {
+	return newStream(m.ctx, id, m.sender, m.newFlowController(id, params.window), params.reset)
+}
+
+func (m *streamsMap) newUniStream(id protocol.StreamID, params streamSendParameters) *SendStream {
+	return newSendStream(m.ctx, id, m.sender, m.newFlowController(id, params.window), params.reset)
+}
+
+func applyStreamSendParameters(s outgoingStream, window protocol.ByteCount, reset bool) {
+	if reset {
+		s.enableResetStreamAt()
+	}
+	// Retain a larger MAX_STREAM_DATA window already received on this stream.
+	s.updateSendWindow(window)
 }
 
 func (m *streamsMap) CloseWithError(err error) {
@@ -345,7 +371,6 @@ func (m *streamsMap) ResetFor0RTT() {
 	defer m.mutex.Unlock()
 	m.reset = true
 	m.CloseWithError(Err0RTTRejected)
-	m.supportsResetStreamAt = false
 	m.initMaps()
 }
 

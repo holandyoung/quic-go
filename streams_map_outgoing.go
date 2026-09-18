@@ -29,7 +29,8 @@ type outgoingStreamsMap[T outgoingStream] struct {
 	maxStream   protocol.StreamID // the maximum stream ID we're allowed to open
 	blockedSent bool              // was a STREAMS_BLOCKED sent for the current maxStream
 
-	newStream            func(protocol.StreamID) T
+	parameters           streamSendParameters
+	newStream            func(protocol.StreamID, streamSendParameters) T
 	queueStreamIDBlocked func(*wire.StreamsBlockedFrame)
 
 	closeErr error
@@ -37,7 +38,7 @@ type outgoingStreamsMap[T outgoingStream] struct {
 
 func newOutgoingStreamsMap[T outgoingStream](
 	streamType protocol.StreamType,
-	newStream func(protocol.StreamID) T,
+	newStream func(protocol.StreamID, streamSendParameters) T,
 	queueControlFrame func(wire.Frame),
 	pers protocol.Perspective,
 ) *outgoingStreamsMap[T] {
@@ -134,7 +135,7 @@ func (m *outgoingStreamsMap[T]) OpenStreamSync(ctx context.Context) (T, error) {
 }
 
 func (m *outgoingStreamsMap[T]) openStream() T {
-	s := m.newStream(m.nextStream)
+	s := m.newStream(m.nextStream, m.parameters)
 	m.streams[m.nextStream] = s
 	m.nextStream += 4
 	return s
@@ -201,23 +202,16 @@ func (m *outgoingStreamsMap[T]) SetMaxStream(id protocol.StreamID) {
 	m.maybeUnblockOpenSync()
 }
 
-// UpdateSendWindow is called when the peer's transport parameters are received.
-// Only in the case of a 0-RTT handshake will we have open streams at this point.
-// We might need to update the send window, in case the server increased it.
-func (m *outgoingStreamsMap[T]) UpdateSendWindow(limit protocol.ByteCount) {
+// UpdateStreamParameters applies new creation parameters and updates existing streams
+// atomically with respect to OpenStream and OpenStreamSync. update must not call
+// back into the registry. It runs before stream quotas wake blocked openers.
+func (m *outgoingStreamsMap[T]) UpdateStreamParameters(parameters streamSendParameters, update func(T)) {
 	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.parameters = parameters
 	for _, str := range m.streams {
-		str.updateSendWindow(limit)
+		update(str)
 	}
-	m.mutex.Unlock()
-}
-
-func (m *outgoingStreamsMap[T]) EnableResetStreamAt() {
-	m.mutex.Lock()
-	for _, str := range m.streams {
-		str.enableResetStreamAt()
-	}
-	m.mutex.Unlock()
 }
 
 // unblockOpenSync unblocks the next OpenStreamSync go-routine to open a new stream
